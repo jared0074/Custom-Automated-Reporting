@@ -168,15 +168,50 @@ def generate_report(input_file, product_file, output_file, platform, log):
             "Total_Quantity", "Total_Amount", "Total_Cost",
             "Platform Charges", "Profit",
         ]]
-        export_df.to_excel(output_file, index=False)
+
+        # ---------- Alphabet Summary (groups SKUs by leading letter) ----------
+        alphabet_src = grouped.copy()
+        alphabet_src["Alphabet"] = (
+            alphabet_src["Seller SKU"].astype(str).str.strip().str.upper().str[0]
+        )
+        alphabet_summary = (
+            alphabet_src.groupby("Alphabet")
+            .agg(
+                Total_Quantity=("Total_Quantity", "sum"),
+                Total_Amount=("Total_Amount", "sum"),
+                Total_Cost=("Total_Cost", "sum"),
+                Platform_Charges=("Platform Charges", "sum"),
+                Profit=("Profit", "sum"),
+            )
+            .reset_index()
+            .rename(columns={"Platform_Charges": "Platform Charges"})
+            .sort_values("Alphabet")
+        )
+        for col in ("Total_Amount", "Total_Cost", "Platform Charges", "Profit"):
+            alphabet_summary[col] = alphabet_summary[col].round(2)
+
+        alphabet_grand = pd.DataFrame({
+            "Alphabet": ["Grand Total"],
+            "Total_Quantity": [alphabet_summary["Total_Quantity"].sum()],
+            "Total_Amount": [alphabet_summary["Total_Amount"].sum().round(2)],
+            "Total_Cost": [alphabet_summary["Total_Cost"].sum().round(2)],
+            "Platform Charges": [alphabet_summary["Platform Charges"].sum().round(2)],
+            "Profit": [alphabet_summary["Profit"].sum().round(2)],
+        })
+        alphabet_export = pd.concat([alphabet_summary, alphabet_grand], ignore_index=True)
+
+        # Write both sheets
+        with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+            export_df.to_excel(writer, sheet_name="Sales Report", index=False)
+            alphabet_export.to_excel(writer, sheet_name="Alphabet Summary", index=False)
 
         # Styling
         wb = load_workbook(output_file)
-        ws = wb.active
         thin = Side(border_style="thin", color="000000")
         border = Border(top=thin, left=thin, right=thin, bottom=thin)
         yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
+        ws = wb["Sales Report"]
         for idx, row in final_df.iterrows():
             excel_row = idx + 2
             if row["row_type"] in ["line", "total"]:
@@ -194,6 +229,22 @@ def generate_report(input_file, product_file, output_file, platform, log):
                 ws.column_dimensions[col_letter].width = 30
             else:
                 ws.column_dimensions[col_letter].width = 16
+
+        ws2 = wb["Alphabet Summary"]
+        last_row = len(alphabet_export) + 1
+        num_cols = len(alphabet_export.columns)
+        for excel_row in range(2, last_row + 1):
+            for col in range(1, num_cols + 1):
+                ws2[f"{get_column_letter(col)}{excel_row}"].border = border
+        for col in range(1, num_cols + 1):
+            ws2[f"{get_column_letter(col)}{last_row}"].fill = yellow_fill
+
+        for col in ws2.columns:
+            col_letter = get_column_letter(col[0].column)
+            if col_letter == "A":
+                ws2.column_dimensions[col_letter].width = 18
+            else:
+                ws2.column_dimensions[col_letter].width = 18
 
         wb.save(output_file)
         log(f"Report saved to: {output_file}")
